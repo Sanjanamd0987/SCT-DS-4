@@ -1,0 +1,59 @@
+import pandas as pd
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.cluster import DBSCAN
+import folium
+from datetime import datetime
+
+# 1. Load data
+df = pd.read_csv('US_Accidents_Dec20_Updated.csv', parse_dates=['Start_Time'])
+df = df[['Start_Time','Start_Lat','Start_Lng','Weather_Condition',
+         'Temperature(F)','Visibility(mi)','Road_Surface_Conditions','Severity']].dropna()
+
+# 2. Feature engineering
+df['hour'] = df['Start_Time'].dt.hour
+df['weekday'] = df['Start_Time'].dt.day_name()
+
+# 3. Exploratory Analysis
+plt.figure(figsize=(12,5))
+sns.countplot(x='hour', data=df, order=range(24))
+plt.title("Accidents by Hour of Day")
+plt.show()
+
+plt.figure(figsize=(10,5))
+sns.countplot(y='Weather_Condition', data=df, order=df['Weather_Condition'].value_counts().index[:10])
+plt.title("Top Weather Conditions at Accident Time")
+plt.show()
+
+plt.figure(figsize=(10,5))
+sns.countplot(y='Road_Surface_Conditions', data=df, order=df['Road_Surface_Conditions'].value_counts().index[:10])
+plt.title("Road Surface Conditions when Accidents Occurred")
+plt.show()
+
+# 4. Geospatial clustering with DBSCAN for hotspots
+coords = df[['Start_Lat','Start_Lng']].values
+kms_per_radian = 6371.0088
+epsilon = 0.5 / kms_per_radian  # 0.5 km radius
+db = DBSCAN(eps=epsilon, min_samples=20, algorithm='ball_tree', metric='haversine').fit(np.radians(coords))
+df['cluster'] = db.labels_
+
+# 5. Plot cluster centroids
+clusters = df[df.cluster >= 0].groupby('cluster')[['Start_Lat','Start_Lng']].mean().reset_index()
+
+# 6. Visualize hotspots on map
+m = folium.Map(location=[df['Start_Lat'].mean(), df['Start_Lng'].mean()], zoom_start=6)
+for _, row in clusters.iterrows():
+    folium.CircleMarker(
+        location=(row['Start_Lat'], row['Start_Lng']),
+        radius=10, color='red', fill=True,
+        popup=f"Cluster {int(row['cluster'])}"
+    ).add_to(m)
+m.save('accident_hotspots.html')
+
+# 7. Analyze contributing factors per hotspot
+hotspot = df[df.cluster == clusters['cluster'].iloc[0]]
+print("Sample hotspot factors by weather:")
+print(hotspot['Weather_Condition'].value_counts().head())
+print("By hour:")
+print(hotspot['hour'].value_counts().sort_index())
